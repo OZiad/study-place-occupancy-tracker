@@ -1,20 +1,32 @@
 #include "PlaceOccupancyStateMachine.hpp"
 #include "secrets.hpp"
+
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <vector>
 
-// TODO OMAR: replace with laptop's IP address (use `ip addr`)
-const char *SERVER_URL = "http://192.168.0.11:8000/api/occupancy";
+const char *SERVER_URL = "https://cory-semipatterned-milo.ngrok-free.dev";
+
+// Hardware config
 const uint8_t sonarPin = 14;
-std::vector<uint8_t> ledPins = {21, 13};
 const uint8_t servoPin = 12;
-OccupancyStateMachine occuSM{ledPins, servoPin, sonarPin, 20, 10};
+std::vector<uint8_t> ledPins = {21, 13};
+
+// SM config
+constexpr uint8_t TOTAL_SEATS = 4;
+constexpr float ANGLE_PER_SEAT = 20.0f;
+constexpr uint32_t SCAN_INTERVAL_S = 10;
+
+constexpr uint32_t POST_INTERVAL_MS = 10000;
+
+OccupancyStateMachine occupancySM{ledPins,        servoPin,        sonarPin,
+                                  ANGLE_PER_SEAT, SCAN_INTERVAL_S, TOTAL_SEATS};
 
 void connectToWiFi() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(WIFI_SSID);
 
-  WiFiClass::mode(WIFI_STA);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int retryCount = 0;
@@ -40,27 +52,26 @@ void sendOccupancy(int freeSeats, int totalSeats) {
   }
 
   HTTPClient http;
-  http.begin(SERVER_URL);
+  http.begin(String(SERVER_URL) + "/api/occupancy");
   http.addHeader("Content-Type", "application/json");
 
   String payload = "{";
-  payload += R"("node_id":"ev8-node-1",)";
+  payload += "\"node_id\":\"lb8-node-1\",";
   payload += "\"free_seats\":" + String(freeSeats) + ",";
   payload += "\"total_seats\":" + String(totalSeats);
   payload += "}";
 
-  Serial.println("POSTing to server: ");
+  Serial.println("POST to /api/occupancy");
   Serial.println(payload);
 
   int httpCode = http.POST(payload);
+
   if (httpCode > 0) {
-    Serial.printf("HTTP Response code: %d\n", httpCode);
-    String resp = http.getString();
+    Serial.printf("HTTP %d\n", httpCode);
     Serial.println("Response:");
-    Serial.println(resp);
+    Serial.println(http.getString());
   } else {
-    Serial.printf("POST failed, error: %s\n",
-                  http.errorToString(httpCode).c_str());
+    Serial.printf("POST failed: %s\n", http.errorToString(httpCode).c_str());
   }
 
   http.end();
@@ -69,20 +80,31 @@ void sendOccupancy(int freeSeats, int totalSeats) {
 void setup() {
   Serial.begin(115200);
   delay(2000);
+
   connectToWiFi();
-  pinMode(sonarPin, INPUT);
-  occuSM.begin();
+  occupancySM.begin();
 }
 
 void loop() {
-  // dummy data for now
-  int totalSeats = 4;
-  static int fakeFree = 0;
-  fakeFree = (fakeFree + 1) % (totalSeats + 1); // cycles 0..4
+  static unsigned long lastPostMs = 0;
+  unsigned long now = millis();
 
-  sendOccupancy(fakeFree, totalSeats);
+  occupancySM.update();
 
-  // send every 10 seconds
-  delay(10000);
-  //    occuSM.update();
+  // Periodically send occupancy data
+  if (now - lastPostMs >= POST_INTERVAL_MS) {
+    lastPostMs = now;
+
+    int freeSeats = occupancySM.emptySeats();
+    int totalSeats = TOTAL_SEATS;
+
+    Serial.print("Reporting occupancy: free=");
+    Serial.print(freeSeats);
+    Serial.print(" / total=");
+    Serial.println(totalSeats);
+
+    sendOccupancy(freeSeats, totalSeats);
+  }
+
+  delay(10);
 }
