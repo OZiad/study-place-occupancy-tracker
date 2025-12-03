@@ -1,0 +1,10 @@
+### POST request for occupancy api
+POST https://cory-semipatterned-milo.ngrok-free.dev/api/occupancy
+Content-Type: application/json
+Accept: application/json
+
+{
+  "node_id": "lb8-node-1",
+  "free_seats": 4,
+  "total_seats": 4
+}
