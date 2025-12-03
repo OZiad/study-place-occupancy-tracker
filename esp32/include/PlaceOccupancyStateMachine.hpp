@@ -1,9 +1,7 @@
 #ifndef ESP32_INCLUDE_PLACEOCCUPANCYSTATEMACHINE_HPP_
 #define ESP32_INCLUDE_PLACEOCCUPANCYSTATEMACHINE_HPP_
 
-#include "secrets.hpp"
 #include <Arduino.h>
-#include <WiFi.h>
 #include <vector>
 
 class OccupancyStateMachine {
@@ -18,122 +16,270 @@ public:
                         const float minimumDistanceFromSonarCm = 25.0f)
       : ledPins_(ledPins), servoPin_(servoPin), sonarPin_(sonarPin),
         anglePerSeat_(anglePerSeat), scanIntervalSec_(scanIntervalSec),
-        totalSeats_(totalSeats), emptySeats_(0),
-        minimumDistanceFromSonar_(minimumDistanceFromSonarCm), state_(Start) {};
+        scanIntervalMs_(scanIntervalSec * 1000UL), totalSeats_(totalSeats),
+        emptySeats_(0), state_(Start),
+        minimumDistanceFromSonar_(minimumDistanceFromSonarCm) {}
 
   void begin() {
     pinMode(sonarPin_, INPUT_PULLUP);
 
     for (uint8_t pin : ledPins_) {
       pinMode(pin, OUTPUT);
+      digitalWrite(pin, LOW);
     }
+
+    baselines_.assign(totalSeats_, 0.0f);
+    seatOccupied_.assign(totalSeats_, false);
+
+    ledcSetup(servoChannel_, 50, 16); // 50 Hz, 16-bit PWM
+    ledcAttachPin(servoPin_, servoChannel_);
+    setServoAngle(0);
+
+    lastScanMs_ = millis();
   }
 
+  void update() {
+    const unsigned long now = millis();
+    runStateMachine(now);
+  }
+
+  uint8_t emptySeats() const { return emptySeats_; }
+  State currentState() const { return state_; }
+
 private:
+  // -------- Config / pins --------
   const std::vector<uint8_t> ledPins_;
   const uint8_t servoPin_;
   const uint8_t sonarPin_;
   const float anglePerSeat_;
   const uint32_t scanIntervalSec_;
+  const uint32_t scanIntervalMs_;
   const uint8_t totalSeats_;
-  const uint8_t emptySeats_;
+  uint8_t emptySeats_;
   State state_;
-  bool systemReady_ = false;
+  bool hardwareReady_ = false;
   const float minimumDistanceFromSonar_;
 
   const int servoChannel_ = 0;
   const int servoMinPwm_ = 3276; // ~1ms
   const int servoMaxPwm_ = 6553; // ~2ms
 
+  // -------- Runtime data --------
+  std::vector<float> baselines_;
+  std::vector<bool> seatOccupied_;
+
+  bool initAttempted_ = false;
+  bool calibrationDone_ = false;
+  bool scanDone_ = false;
+
+  unsigned long lastScanMs_ = 0;
+
+  const float occupancyDeltaCm_ = 10.0f;
+
+  // ---- Helpers ----
   void setServoAngle(uint8_t angle) const {
     angle = constrain(angle, 0, 180);
     int pwmValue = map(angle, 0, 180, servoMinPwm_, servoMaxPwm_);
     ledcWrite(servoChannel_, pwmValue);
   }
 
-  void runStateMachine() {
-    switch (state_) { // states
-    case Start:
-      Serial.print(F("Start -> Init"));
-      state_ = Init;
-      break;
-    case Init:
-      Serial.print(F("Init -> Calibrate"));
-      break;
-    case Calibrate:
-      break;
-    case Scan:
-      break;
-    case Upload:
-      break;
-    case Idle:
-      break;
-    }
-
-    switch (state_) { // actions
-    case Start:
-      break;
-    case Init:
-      systemReady_ = connectToWifi() && initSensors();
-      Serial.print(F("Init -> Calibrate"));
-      break;
-    case Calibrate:
-      break;
-    case Scan:
-      break;
-    case Upload:
-      break;
-    case Idle:
-      break;
-    }
-  }
-
-  static bool connectToWifi() {
-    WiFiClass::mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.println(F("\nConnecting to WiFi Network .."));
-
-    uint8_t attempts = 0;
-    const uint8_t MAX_ATTEMPTS = 20;
-    while (WiFiClass::status() != WL_CONNECTED && attempts < MAX_ATTEMPTS) {
-      attempts++;
-      Serial.print(".");
-      delay(100);
-    }
-
-    if (attempts >= MAX_ATTEMPTS) {
-      return false;
-    }
-
-    Serial.println(F("\nConnected to the WiFi network"));
-    Serial.print(F("Local ESP32 IP: "));
-    Serial.println(WiFi.localIP());
-
-    return true;
-  }
-
   float readSonarData() const {
-    // 147 us per inch OR 58 us per cm
-    unsigned long pulse = pulseIn(sonarPin_, HIGH);
+    unsigned long pulse = pulseIn(sonarPin_, HIGH, 50000UL); // timeout 50 ms
+    if (pulse == 0) {
+      return 9999.0f;
+    }
+    return pulse / 58.0f; // µs -> cm
+  }
 
-    return pulse / 58.0;
+  void setAllLeds(bool on) {
+    for (uint8_t pin : ledPins_) {
+      digitalWrite(pin, on ? HIGH : LOW);
+    }
+  }
+
+  void updateSeatLedsFromOccupancy() {
+    size_t n = min<size_t>(ledPins_.size(), seatOccupied_.size());
+    for (size_t i = 0; i < n; ++i) {
+      digitalWrite(ledPins_[i], seatOccupied_[i] ? HIGH : LOW);
+    }
   }
 
   bool initSensors() {
-    Serial.println("Initializing hardware...");
+    Serial.println(F("[INIT] Initializing hardware..."));
 
-    ledcSetup(servoChannel_, 50, 16);
-    ledcAttachPin(servoPin_, servoChannel_);
     setServoAngle(0);
-    Serial.println("Servo OK.");
+    delay(300);
+    Serial.println(F("[INIT] Servo OK"));
 
     float dist = readSonarData();
     if (dist < minimumDistanceFromSonar_) {
-      Serial.print(F("[INIT] ERROR: Sonar too close to object"));
+      Serial.println(F("[INIT] ERROR: Sonar too close to object"));
       return false;
     }
 
+    Serial.println(F("[INIT] Sonar OK"));
     return true;
   }
+
+  bool performCalibration() {
+    Serial.println(F("[CALIB] Starting calibration..."));
+    const int samplesPerSeat = 5;
+
+    for (uint8_t seat = 0; seat < totalSeats_; ++seat) {
+      float angle = anglePerSeat_ * seat;
+      Serial.print(F("[CALIB] Seat "));
+      Serial.print(seat);
+      Serial.print(F(" angle="));
+      Serial.println(angle);
+
+      setServoAngle(static_cast<uint8_t>(angle));
+      delay(300);
+
+      float sum = 0.0f;
+      for (int i = 0; i < samplesPerSeat; ++i) {
+        float d = readSonarData();
+        sum += d;
+        delay(60);
+      }
+      float avg = sum / samplesPerSeat;
+      baselines_[seat] = avg;
+
+      Serial.print(F("        baseline="));
+      Serial.print(avg);
+      Serial.println(F(" cm"));
+    }
+
+    setServoAngle(0);
+    Serial.println(F("[CALIB] Done."));
+    return true;
+  }
+
+  bool performScan() {
+    Serial.println(F("[SCAN] Scanning seats..."));
+    const int samplesPerSeat = 3;
+
+    emptySeats_ = 0;
+
+    for (uint8_t seat = 0; seat < totalSeats_; ++seat) {
+      float angle = anglePerSeat_ * seat;
+      setServoAngle(static_cast<uint8_t>(angle));
+      delay(300);
+
+      float sum = 0.0f;
+      for (int i = 0; i < samplesPerSeat; ++i) {
+        float d = readSonarData();
+        sum += d;
+        delay(60);
+      }
+      float avg = sum / samplesPerSeat;
+
+      bool occupied = avg < (baselines_[seat] - occupancyDeltaCm_);
+      seatOccupied_[seat] = occupied;
+      if (!occupied) {
+        emptySeats_++;
+      }
+
+      Serial.print(F("[SCAN] Seat "));
+      Serial.print(seat);
+      Serial.print(F(" avg="));
+      Serial.print(avg);
+      Serial.print(F(" cm -> "));
+      Serial.println(occupied ? F("OCCUPIED") : F("FREE"));
+    }
+
+    setServoAngle(0);
+    updateSeatLedsFromOccupancy();
+
+    Serial.print(F("[SCAN] Empty seats: "));
+    Serial.println(emptySeats_);
+
+    return true;
+  }
+
+  // ---- State machine ----
+  void runStateMachine(unsigned long nowMs) {
+    // --- Transitions ---
+    switch (state_) {
+    case Start:
+      state_ = Init;
+      break;
+
+    case Init:
+      if (hardwareReady_) {
+        state_ = Calibrate;
+        Serial.println(F("[SM] INIT -> CALIBRATE"));
+      }
+      break;
+
+    case Calibrate:
+      if (calibrationDone_) {
+        lastScanMs_ = nowMs;
+        state_ = Idle;
+        Serial.println(F("[SM] CALIBRATE -> IDLE"));
+      }
+      break;
+
+    case Idle:
+      if (hardwareReady_ && calibrationDone_ &&
+          (nowMs - lastScanMs_) >= scanIntervalMs_) {
+        scanDone_ = false;
+        state_ = Scan;
+        Serial.println(F("[SM] IDLE -> SCAN"));
+      }
+      break;
+
+    case Scan:
+      if (scanDone_) {
+        lastScanMs_ = nowMs;
+        state_ = Idle;
+        Serial.println(F("[SM] SCAN -> IDLE"));
+      }
+      break;
+
+    case Upload:
+      // not used if upload is done in main()
+      state_ = Idle;
+      break;
+    }
+
+    // --- Actions ---
+    switch (state_) {
+    case Start:
+      break;
+
+    case Init:
+      if (!initAttempted_) {
+        setAllLeds(true);
+        hardwareReady_ = initSensors();
+        initAttempted_ = true;
+        if (!hardwareReady_) {
+          setAllLeds(false);
+        }
+      }
+      break;
+
+    case Calibrate:
+      if (!calibrationDone_) {
+        setAllLeds(false);
+        calibrationDone_ = performCalibration();
+      }
+      break;
+
+    case Idle:
+      // LEDs show last scan result
+      break;
+
+    case Scan:
+      if (!scanDone_) {
+        scanDone_ = performScan();
+      }
+      break;
+
+    case Upload:
+      // unused here
+      break;
+    }
+  }
 };
+
 #endif
