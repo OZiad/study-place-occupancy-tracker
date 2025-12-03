@@ -4,7 +4,14 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-last_readings = {}
+last_readings = {
+    "1": {
+        "node_id": "node_id",
+        "free_seats": "free_seats",
+        "total_seats": "total_seats",
+        "timestamp": "timestamp",
+    }
+}
 
 
 @app.route("/")
@@ -58,4 +65,4 @@ def status():
 
 if __name__ == "__main__":
     # listen on all interfaces so ESP32 can reach it
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=8080, debug=True)
