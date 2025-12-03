@@ -20,11 +20,10 @@ constexpr uint32_t SCAN_INTERVAL_S = 10;
 
 constexpr uint32_t POST_INTERVAL_MS = 10000;
 
-OccupancyStateMachine occupancySM{ledPins, servoPin, sonarPin,
+OccupancyStateMachine occupancySM{ledPins,        servoPin,        sonarPin,
                                   ANGLE_PER_SEAT, SCAN_INTERVAL_S, TOTAL_SEATS};
 
-void connectToWiFi()
-{
+void connectToWiFi() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(WIFI_SSID);
 
@@ -32,29 +31,23 @@ void connectToWiFi()
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int retryCount = 0;
-  while (WiFiClass::status() != WL_CONNECTED && retryCount < 30)
-  {
+  while (WiFiClass::status() != WL_CONNECTED && retryCount < 30) {
     delay(500);
     Serial.print(".");
     retryCount++;
   }
 
-  if (WiFiClass::status() == WL_CONNECTED)
-  {
+  if (WiFiClass::status() == WL_CONNECTED) {
     Serial.println("\nWiFi connected!");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-  }
-  else
-  {
+  } else {
     Serial.println("\nFailed to connect to WiFi.");
   }
 }
 
-void sendOccupancy(int freeSeats, int totalSeats)
-{
-  if (WiFiClass::status() != WL_CONNECTED)
-  {
+void sendOccupancy(int freeSeats, int totalSeats) {
+  if (WiFiClass::status() != WL_CONNECTED) {
     Serial.println("WiFi not connected, skipping POST");
     return;
   }
@@ -66,8 +59,7 @@ void sendOccupancy(int freeSeats, int totalSeats)
   String postUrl = String(SERVER_URL) + "/api/occupancy";
   Serial.println(String("Posting to: ") + postUrl);
 
-  if (!http.begin(client, postUrl))
-  {
+  if (!http.begin(client, postUrl)) {
     Serial.println("http.begin() failed");
     return;
   }
@@ -86,14 +78,11 @@ void sendOccupancy(int freeSeats, int totalSeats)
 
   int httpCode = http.POST(payload);
 
-  if (httpCode > 0)
-  {
+  if (httpCode > 0) {
     Serial.printf("HTTP %d\n", httpCode);
     Serial.println("Response:");
     Serial.println(http.getString());
-  }
-  else
-  {
+  } else {
     Serial.printf("POST failed: %d (%s)\n", httpCode,
                   HTTPClient::errorToString(httpCode).c_str());
   }
@@ -101,8 +90,44 @@ void sendOccupancy(int freeSeats, int totalSeats)
   http.end();
 }
 
-void setup()
-{
+bool fetchCalibrationCommand() {
+  if (WiFiClass::status() != WL_CONNECTED) {
+    return false;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  String url = String(SERVER_URL) + "/api/config?node_id=lb8-node-1";
+  Serial.println(String("GET config from: ") + url);
+
+  if (!http.begin(client, url)) {
+    Serial.println("http.begin() failed (config)");
+    return false;
+  }
+  http.setReuse(false);
+  http.addHeader("localtonet-skip-warning", "1");
+
+  int httpCode = http.GET();
+
+  if (httpCode <= 0) {
+    Serial.printf("Config GET failed: %d (%s)\n", httpCode,
+                  HTTPClient::errorToString(httpCode).c_str());
+    http.end();
+    return false;
+  }
+
+  String body = http.getString();
+  http.end();
+
+  Serial.println("Config response: " + body);
+
+  bool calibration = body.indexOf("\"calibration\": true") != -1;
+  return calibration;
+}
+
+void setup() {
   Serial.begin(115200);
   delay(2000);
 
@@ -110,19 +135,27 @@ void setup()
   occupancySM.begin();
 }
 
-void loop()
-{
+void loop() {
   static unsigned long lastPostMs = 0;
+  static unsigned long lastConfigMs = 0;
   unsigned long now = millis();
 
   occupancySM.update();
 
+  // Poll server for config / calibration command every 3s
+  if (now - lastConfigMs >= 3000) {
+    lastConfigMs = now;
+    bool calibration = fetchCalibrationCommand();
+    if (calibration) {
+      Serial.println("Server requested CALIBRATION mode");
+      occupancySM.setCalibrationMode(true);
+    }
+  }
+
   // Periodically send occupancy data
-  if (now - lastPostMs >= POST_INTERVAL_MS)
-  {
+  if (now - lastPostMs >= POST_INTERVAL_MS) {
     lastPostMs = now;
 
-    // TODO: light up bulb based on seats.
     int freeSeats = occupancySM.emptySeats();
     int totalSeats = TOTAL_SEATS;
 

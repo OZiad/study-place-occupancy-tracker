@@ -5,11 +5,53 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 last_readings: dict[str, dict] = {}
+calibration_flags: dict[str, bool] = {}
 
 
 @app.route("/")
 def index():
     return "Study Space Scanner API is running", 200
+
+
+@app.route("/api/calibration", methods=["POST"])
+def calibration():
+    """
+    Called by the web dashboard to request calibration on a node.
+
+    JSON body:
+    {
+        "node_id": "lb8-node-1",
+        "enable": true
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    node_id = data.get("node_id")
+    enable = bool(data.get("enable", True))
+
+    if not node_id:
+        return jsonify({"error": "node_id required"}), 400
+
+    calibration_flags[node_id] = enable
+    print(f"Calibration for {node_id} -> {enable}")
+
+    return jsonify({"status": "ok", "node_id": node_id, "calibration": enable}), 200
+
+
+@app.route("/api/config", methods=["GET"])
+def config():
+    """
+    Called by ESP32 nodes to fetch pending config/commands.
+
+    Query string: ?node_id=lb8-node-1
+    """
+    node_id = request.args.get("node_id")
+    if not node_id:
+        return jsonify({"error": "node_id required"}), 400
+
+    # One-shot: return & clear the flag so it only triggers once
+    calibration = calibration_flags.pop(node_id, False)
+
+    return jsonify({"calibration": calibration}), 200
 
 
 @app.route("/api/occupancy", methods=["POST"])

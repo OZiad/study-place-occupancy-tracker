@@ -169,3 +169,23 @@ body {
 .node-timestamp span {
   color: #e5e7eb;
 }
+
+.calibration-btn {
+  margin-top: 0.75rem;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+  border-radius: 999px;
+  border: 1px solid #4b5563;
+  background: #111827;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.calibration-btn:hover:not(:disabled) {
+  background: #1f2937;
+}
+
+.calibration-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

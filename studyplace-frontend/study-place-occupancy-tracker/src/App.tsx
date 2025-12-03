@@ -11,6 +11,8 @@ function App() {
   const [nodes, setNodes] = useState<NodeStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [calibBusy, setCalibBusy] = useState<string | null>(null);
+  const [calibMessage, setCalibMessage] = useState<string | null>(null);
 
   const fetchStatus = async () => {
     try {
@@ -24,6 +26,27 @@ function App() {
       console.error(err);
       setError("Failed to load status.");
       setLoading(false);
+    }
+  };
+
+  const triggerCalibration = async (nodeId: string) => {
+    try {
+      setCalibBusy(nodeId);
+      setCalibMessage(null);
+
+      const res = await fetch("/api/calibration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node_id: nodeId, enable: true }),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setCalibMessage(`Calibration command sent to ${nodeId}.`);
+    } catch (err) {
+      console.error(err);
+      setCalibMessage("Failed to send calibration command.");
+    } finally {
+      setCalibBusy(null);
     }
   };
 
@@ -59,6 +82,7 @@ function App() {
             ) : (
               <>
                 {/* overall stats */}
+                {calibMessage && <p className="status-text">{calibMessage}</p>}
                 <section className="stats-grid">
                   <div className="stat-card">
                     <span className="stat-label">Nodes Online</span>
@@ -119,6 +143,15 @@ function App() {
                         <p className="node-timestamp">
                           Last update: <span>{lastUpdate}</span>
                         </p>
+                        <button
+                          className="calibration-btn"
+                          onClick={() => triggerCalibration(node.node_id)}
+                          disabled={calibBusy === node.node_id}
+                        >
+                          {calibBusy === node.node_id
+                            ? "Sending…"
+                            : "Enter calibration"}
+                        </button>
                       </article>
                     );
                   })}
