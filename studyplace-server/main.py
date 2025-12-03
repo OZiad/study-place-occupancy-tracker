@@ -1,17 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-last_readings = {
-    "1": {
-        "node_id": "node_id",
-        "free_seats": "free_seats",
-        "total_seats": "total_seats",
-        "timestamp": "timestamp",
-    }
-}
+last_readings: dict[str, dict] = {}
 
 
 @app.route("/")
@@ -40,7 +33,7 @@ def occupancy():
     if free_seats is None or total_seats is None:
         return jsonify({"error": "free_seats and total_seats required"}), 400
 
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     last_readings[node_id] = {
         "node_id": node_id,
