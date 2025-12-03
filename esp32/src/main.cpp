@@ -1,9 +1,14 @@
+#include "PlaceOccupancyStateMachine.hpp"
 #include "secrets.hpp"
 #include <HTTPClient.h>
 #include <WiFi.h>
 
 // TODO OMAR: replace with laptop's IP address (use `ip addr`)
 const char *SERVER_URL = "http://192.168.0.11:8000/api/occupancy";
+const uint8_t sonarPin = 14;
+std::vector<uint8_t> ledPins = {21, 13};
+const uint8_t servoPin = 12;
+OccupancyStateMachine occuSM{ledPins, servoPin, sonarPin, 20, 10};
 
 void connectToWiFi() {
   Serial.print("Connecting to WiFi: ");
@@ -65,6 +70,8 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
   connectToWiFi();
+  pinMode(sonarPin, INPUT);
+  occuSM.begin();
 }
 
 void loop() {
@@ -77,4 +84,5 @@ void loop() {
 
   // send every 10 seconds
   delay(10000);
+  //    occuSM.update();
 }

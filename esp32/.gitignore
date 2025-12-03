@@ -1,3 +1,5 @@
+include/secrets.hpp
+
 ### C++ ###
 # Prerequisites
 *.d
