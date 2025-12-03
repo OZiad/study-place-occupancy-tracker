@@ -5,7 +5,8 @@
 #include <WiFi.h>
 #include <vector>
 
-const char *SERVER_URL = "https://cory-semipatterned-milo.ngrok-free.dev";
+// TODO: dynamic url, update it before running
+const char *SERVER_URL = "https://4jel2guyd.localto.net";
 
 // Hardware config
 const uint8_t sonarPin = 14;
@@ -26,7 +27,7 @@ void connectToWiFi() {
   Serial.print("Connecting to WiFi: ");
   Serial.println(WIFI_SSID);
 
-  WiFi.mode(WIFI_STA);
+  WiFiClass::mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   int retryCount = 0;
@@ -51,9 +52,20 @@ void sendOccupancy(int freeSeats, int totalSeats) {
     return;
   }
 
+  WiFiClientSecure client;
+  client.setInsecure();
+
   HTTPClient http;
-  http.begin(String(SERVER_URL) + "/api/occupancy");
+  String postUrl = String(SERVER_URL) + "/api/occupancy";
+  Serial.println(String("Posting to: ") + postUrl);
+
+  if (!http.begin(client, postUrl)) {
+    Serial.println("http.begin() failed");
+    return;
+  }
+  http.setReuse(false);
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("localtonet-skip-warning", "1");
 
   String payload = "{";
   payload += "\"node_id\":\"lb8-node-1\",";
@@ -71,7 +83,8 @@ void sendOccupancy(int freeSeats, int totalSeats) {
     Serial.println("Response:");
     Serial.println(http.getString());
   } else {
-    Serial.printf("POST failed: %s\n", http.errorToString(httpCode).c_str());
+    Serial.printf("POST failed: %d (%s)\n", httpCode,
+                  HTTPClient::errorToString(httpCode).c_str());
   }
 
   http.end();
@@ -95,6 +108,7 @@ void loop() {
   if (now - lastPostMs >= POST_INTERVAL_MS) {
     lastPostMs = now;
 
+    // TODO: light up bulb based on seats.
     int freeSeats = occupancySM.emptySeats();
     int totalSeats = TOTAL_SEATS;
 
