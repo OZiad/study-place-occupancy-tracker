@@ -4,26 +4,38 @@
 #include <Arduino.h>
 #include <vector>
 
-class OccupancyStateMachine {
+class OccupancyStateMachine
+{
 public:
-  enum State { Start, Init, Calibrate, Scan, Upload, Idle };
+  enum State
+  {
+    Start,
+    Init,
+    Calibrate,
+    Scan,
+    Upload,
+    Idle
+  };
 
   OccupancyStateMachine(const std::vector<uint8_t> &ledPins,
                         const uint8_t servoPin, uint8_t sonarPin,
                         const float anglePerSeat,
                         const uint32_t scanIntervalSec,
                         const uint8_t totalSeats = 4,
-                        const float minimumDistanceFromSonarCm = 25.0f)
+                        const float minimumDistanceFromSonarCm = 25.0f,
+                        const uint8_t scanningLed = 2)
       : ledPins_(ledPins), servoPin_(servoPin), sonarPin_(sonarPin),
         anglePerSeat_(anglePerSeat), scanIntervalSec_(scanIntervalSec),
         scanIntervalMs_(scanIntervalSec * 1000UL), totalSeats_(totalSeats),
         emptySeats_(0), state_(Start),
-        minimumDistanceFromSonar_(minimumDistanceFromSonarCm) {}
+        minimumDistanceFromSonar_(minimumDistanceFromSonarCm), scanningPin_(scanningLed) {}
 
-  void begin() {
+  void begin()
+  {
     pinMode(sonarPin_, INPUT_PULLUP);
 
-    for (uint8_t pin : ledPins_) {
+    for (uint8_t pin : ledPins_)
+    {
       pinMode(pin, OUTPUT);
       digitalWrite(pin, LOW);
     }
@@ -38,7 +50,8 @@ public:
     lastScanMs_ = millis();
   }
 
-  void update() {
+  void update()
+  {
     const unsigned long now = millis();
     runStateMachine(now);
   }
@@ -51,6 +64,7 @@ private:
   const std::vector<uint8_t> ledPins_;
   const uint8_t servoPin_;
   const uint8_t sonarPin_;
+  const uint8_t scanningPin_;
   const float anglePerSeat_;
   const uint32_t scanIntervalSec_;
   const uint32_t scanIntervalMs_;
@@ -77,34 +91,42 @@ private:
   const float occupancyDeltaCm_ = 10.0f;
 
   // ---- Helpers ----
-  void setServoAngle(uint8_t angle) const {
+  void setServoAngle(uint8_t angle) const
+  {
     angle = constrain(angle, 0, 180);
     int pwmValue = map(angle, 0, 180, servoMinPwm_, servoMaxPwm_);
     ledcWrite(servoChannel_, pwmValue);
   }
 
-  float readSonarData() const {
+  float readSonarData() const
+  {
     unsigned long pulse = pulseIn(sonarPin_, HIGH, 50000UL); // timeout 50 ms
-    if (pulse == 0) {
+    if (pulse == 0)
+    {
       return 9999.0f;
     }
     return pulse / 58.0f; // µs -> cm
   }
 
-  void setAllLeds(bool on) {
-    for (uint8_t pin : ledPins_) {
+  void setAllLeds(bool on)
+  {
+    for (uint8_t pin : ledPins_)
+    {
       digitalWrite(pin, on ? HIGH : LOW);
     }
   }
 
-  void updateSeatLedsFromOccupancy() {
+  void updateSeatLedsFromOccupancy()
+  {
     size_t n = min<size_t>(ledPins_.size(), seatOccupied_.size());
-    for (size_t i = 0; i < n; ++i) {
-      digitalWrite(ledPins_[i], seatOccupied_[i] ? HIGH : LOW);
+    for (size_t i = 0; i < n; ++i)
+    {
+      digitalWrite(ledPins_[i], seatOccupied_[i] ? LOW : HIGH);
     }
   }
 
-  bool initSensors() {
+  bool initSensors()
+  {
     Serial.println(F("[INIT] Initializing hardware..."));
 
     setServoAngle(0);
@@ -112,7 +134,8 @@ private:
     Serial.println(F("[INIT] Servo OK"));
 
     float dist = readSonarData();
-    if (dist < minimumDistanceFromSonar_) {
+    if (dist < minimumDistanceFromSonar_)
+    {
       Serial.println(F("[INIT] ERROR: Sonar too close to object"));
       return false;
     }
@@ -121,11 +144,13 @@ private:
     return true;
   }
 
-  bool performCalibration() {
+  bool performCalibration()
+  {
     Serial.println(F("[CALIB] Starting calibration..."));
     const int samplesPerSeat = 5;
 
-    for (uint8_t seat = 0; seat < totalSeats_; ++seat) {
+    for (uint8_t seat = 0; seat < totalSeats_; ++seat)
+    {
       float angle = anglePerSeat_ * seat;
       Serial.print(F("[CALIB] Seat "));
       Serial.print(seat);
@@ -136,7 +161,8 @@ private:
       delay(300);
 
       float sum = 0.0f;
-      for (int i = 0; i < samplesPerSeat; ++i) {
+      for (int i = 0; i < samplesPerSeat; ++i)
+      {
         float d = readSonarData();
         sum += d;
         delay(60);
@@ -154,19 +180,22 @@ private:
     return true;
   }
 
-  bool performScan() {
+  bool performScan()
+  {
     Serial.println(F("[SCAN] Scanning seats..."));
     const int samplesPerSeat = 3;
 
     emptySeats_ = 0;
 
-    for (uint8_t seat = 0; seat < totalSeats_; ++seat) {
+    for (uint8_t seat = 0; seat < totalSeats_; ++seat)
+    {
       float angle = anglePerSeat_ * seat;
       setServoAngle(static_cast<uint8_t>(angle));
       delay(300);
 
       float sum = 0.0f;
-      for (int i = 0; i < samplesPerSeat; ++i) {
+      for (int i = 0; i < samplesPerSeat; ++i)
+      {
         float d = readSonarData();
         sum += d;
         delay(60);
@@ -175,7 +204,8 @@ private:
 
       bool occupied = avg < (baselines_[seat] - occupancyDeltaCm_);
       seatOccupied_[seat] = occupied;
-      if (!occupied) {
+      if (!occupied)
+      {
         emptySeats_++;
       }
 
@@ -197,22 +227,26 @@ private:
   }
 
   // ---- State machine ----
-  void runStateMachine(unsigned long nowMs) {
+  void runStateMachine(unsigned long nowMs)
+  {
     // --- Transitions ---
-    switch (state_) {
+    switch (state_)
+    {
     case Start:
       state_ = Init;
       break;
 
     case Init:
-      if (hardwareReady_) {
+      if (hardwareReady_)
+      {
         state_ = Calibrate;
         Serial.println(F("[SM] INIT -> CALIBRATE"));
       }
       break;
 
     case Calibrate:
-      if (calibrationDone_) {
+      if (calibrationDone_)
+      {
         lastScanMs_ = nowMs;
         state_ = Idle;
         Serial.println(F("[SM] CALIBRATE -> IDLE"));
@@ -221,7 +255,8 @@ private:
 
     case Idle:
       if (hardwareReady_ && calibrationDone_ &&
-          (nowMs - lastScanMs_) >= scanIntervalMs_) {
+          (nowMs - lastScanMs_) >= scanIntervalMs_)
+      {
         scanDone_ = false;
         state_ = Scan;
         Serial.println(F("[SM] IDLE -> SCAN"));
@@ -229,7 +264,8 @@ private:
       break;
 
     case Scan:
-      if (scanDone_) {
+      if (scanDone_)
+      {
         lastScanMs_ = nowMs;
         state_ = Idle;
         Serial.println(F("[SM] SCAN -> IDLE"));
@@ -237,29 +273,32 @@ private:
       break;
 
     case Upload:
-      // not used if upload is done in main()
       state_ = Idle;
       break;
     }
 
     // --- Actions ---
-    switch (state_) {
+    switch (state_)
+    {
     case Start:
       break;
 
     case Init:
-      if (!initAttempted_) {
+      if (!initAttempted_)
+      {
         setAllLeds(true);
         hardwareReady_ = initSensors();
         initAttempted_ = true;
-        if (!hardwareReady_) {
+        if (!hardwareReady_)
+        {
           setAllLeds(false);
         }
       }
       break;
 
     case Calibrate:
-      if (!calibrationDone_) {
+      if (!calibrationDone_)
+      {
         setAllLeds(false);
         calibrationDone_ = performCalibration();
       }
@@ -270,8 +309,11 @@ private:
       break;
 
     case Scan:
-      if (!scanDone_) {
+      if (!scanDone_)
+      {
+        digitalWrite(scanningPin_, HIGH);
         scanDone_ = performScan();
+        digitalWrite(scanningPin_, LOW);
       }
       break;
 
